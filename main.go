@@ -36,6 +36,7 @@ func main() {
 	server_handler.HandleFunc("GET /admin/metrics", state.handlerMetrics)
 	server_handler.HandleFunc("POST /admin/reset", state.handlerReset)
 	server_handler.HandleFunc("POST /api/chirps", state.handlerChirps)
+	server_handler.HandleFunc("GET /api/chirps", state.handlerGetChirps)
 	server_handler.HandleFunc("POST /api/users", state.handlerUsers)
 
 	server := http.Server{
@@ -48,6 +49,26 @@ func main() {
 	if err != nil {
 		log.Fatal("failed to listen and serve")
 	}
+}
+
+func (self *apiConfig) handlerGetChirps(resp http.ResponseWriter, req *http.Request) {
+	chirps, err := self.dbQueries.Chirps(req.Context())
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to fetch chirps from db -> %v", err)
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
+
+		return
+	}
+
+	toSend, err := json.Marshal(chirps)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to marshal chirps -> %v", err)
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
+
+		return
+	}
+
+	httpRespond(resp, "application/json", http.StatusOK, toSend)
 }
 
 func (self *apiConfig) handlerChirps(resp http.ResponseWriter, req *http.Request) {
