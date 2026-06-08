@@ -6,14 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 type chirp struct {
-	Body string `json:"body"`
-}
-
-type cleanedChirp struct {
-	CleanedBody string `json:"cleaned_body"`
+	Body   string    `json:"body"`
+	UserId uuid.UUID `json:"user_id"`
 }
 
 func validate_chirp(resp http.ResponseWriter, req *http.Request) (chirp, error) {
@@ -35,10 +34,12 @@ func validate_chirp(resp http.ResponseWriter, req *http.Request) (chirp, error) 
 	return chirp, nil
 }
 
-func censorship(c chirp) cleanedChirp {
+func censorship(c chirp) chirp {
 	words := strings.Split(c.Body, " ")
 	forbidden := []string{"kerfuffle", "sharbert", "fornax"}
-	var ret cleanedChirp
+
+	ret := c
+	ret.Body = ""
 	for idx, word := range words {
 
 		for idx, _ := range forbidden {
@@ -50,10 +51,9 @@ func censorship(c chirp) cleanedChirp {
 		if len(words) == idx+1 {
 			suffix = ""
 		}
-		ret.CleanedBody += word + suffix
+		ret.Body += word + suffix
 
 	}
 
-	// ret.Body = strings.ReplaceAll(chirp.Body, "kerfuffle", "****")
 	return ret
 }

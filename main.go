@@ -35,7 +35,7 @@ func main() {
 	server_handler.HandleFunc("GET /api/healthz", handlerHealthz)
 	server_handler.HandleFunc("GET /admin/metrics", state.handlerMetrics)
 	server_handler.HandleFunc("POST /admin/reset", state.handlerReset)
-	server_handler.HandleFunc("POST /api/validate_chirp", handlerValidateChirps)
+	server_handler.HandleFunc("POST /api/chirps", state.handlerChirps)
 	server_handler.HandleFunc("POST /api/users", state.handlerUsers)
 
 	server := http.Server{
@@ -50,21 +50,34 @@ func main() {
 	}
 }
 
-func handlerValidateChirps(resp http.ResponseWriter, req *http.Request) {
+func (self *apiConfig) handlerChirps(resp http.ResponseWriter, req *http.Request) {
 	chirp, err := validate_chirp(resp, req)
 	if err != nil {
 		return
 	}
 
-	cleaned := censorship(chirp)
+	cleanedChirp := censorship(chirp)
 
-	toSend, err := json.Marshal(cleaned)
+	insertedChirp, err := self.dbQueries.CreateChirp(req.Context(), database.CreateChirpParams{
+		Body:   cleanedChirp.Body,
+		UserID: cleanedChirp.UserId,
+	})
 	if err != nil {
-		resp.WriteHeader(http.StatusBadRequest)
+		errMsg := fmt.Sprintf("failed to insert chirp -> %v", err)
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
+
 		return
 	}
 
-	httpRespond(resp, "application/json; charset=utf-8", http.StatusOK, toSend)
+	toSend, err := json.Marshal(insertedChirp)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to marshal chirp from db -> %v", err)
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
+
+		return
+	}
+
+	httpRespond(resp, "application/json; charset=utf-8", http.StatusCreated, toSend)
 }
 
 func handlerHealthz(resp http.ResponseWriter, req *http.Request) {
