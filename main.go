@@ -91,18 +91,24 @@ func (self *apiConfig) handlerUsers(resp http.ResponseWriter, req *http.Request)
 	if err != nil {
 		errMsg := fmt.Sprintf(`error decoding json %v, expect: {"email":"..."}`, err)
 		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
+
+		return
 	}
 
 	user, err := self.dbQueries.CreateUser(req.Context(), usersJson.Email)
 	if err != nil {
 		errMsg := fmt.Sprintf("database create user failed -> %v", err)
 		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
+
+		return
 	}
 
 	bytes, err := json.Marshal(user)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to marshal created user from db -> %v", err)
 		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
+
+		return
 	}
 
 	httpRespond(resp, "application/json", http.StatusCreated, bytes)
@@ -112,8 +118,10 @@ func (self *apiConfig) handlerReset(resp http.ResponseWriter, req *http.Request)
 	if !self.isDevPlatform {
 		httpRespond(resp, "text/plain", http.StatusForbidden,
 			[]byte("Endpoint exclusive to devs"))
+
 		return
 	}
+
 	self.fileServersHits.Store(0)
 	err := self.dbQueries.EmptyUsers(req.Context())
 	if err != nil {
