@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/gitc-azz/bootdotdev-go-learn-http-servers/internal/database"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
@@ -37,6 +38,7 @@ func main() {
 	server_handler.HandleFunc("POST /admin/reset", state.handlerReset)
 	server_handler.HandleFunc("POST /api/chirps", state.handlerChirps)
 	server_handler.HandleFunc("GET /api/chirps", state.handlerGetChirps)
+	server_handler.HandleFunc("GET /api/chirps/{id}", state.handlerGetChirp)
 	server_handler.HandleFunc("POST /api/users", state.handlerUsers)
 
 	server := http.Server{
@@ -47,8 +49,44 @@ func main() {
 	err = server.ListenAndServe()
 
 	if err != nil {
-		log.Fatal("failed to listen and serve")
+		log.Fatalf("failed to listen and serve -> %v", err)
 	}
+}
+
+func (self *apiConfig) handlerGetChirp(resp http.ResponseWriter, req *http.Request) {
+	idRaw := req.PathValue("id")
+	if idRaw == "" {
+		httpRespond(resp, "text/plain", http.StatusBadRequest,
+			[]byte("id of the chirp is empty"))
+
+		return
+	}
+	id, err := uuid.Parse(idRaw)
+	if err != nil {
+		errMsg := fmt.Sprintf("invalid uuid {%v} -> %v", idRaw, err)
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
+
+		return
+	}
+
+	chirp, err := self.dbQueries.Chirp(req.Context(), id)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to fetch from db, chirp {%v} -> %v",
+			id, err)
+		httpRespond(resp, "text/plain", http.StatusNotFound, []byte(errMsg))
+
+		return
+	}
+
+	toSend, err := json.Marshal(chirp)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to marshal chirp -> %v", err)
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
+
+		return
+	}
+
+	httpRespond(resp, "application/json", http.StatusOK, toSend)
 }
 
 func (self *apiConfig) handlerGetChirps(resp http.ResponseWriter, req *http.Request) {
