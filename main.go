@@ -9,9 +9,12 @@ import (
 	"os"
 	"sync/atomic"
 
+	"github.com/gitc-azz/bootdotdev-go-learn-http-servers/internal/auth"
 	"github.com/gitc-azz/bootdotdev-go-learn-http-servers/internal/database"
+	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+
 	_ "github.com/lib/pq"
 )
 
@@ -39,7 +42,8 @@ func main() {
 	server_handler.HandleFunc("POST /api/chirps", state.handlerChirps)
 	server_handler.HandleFunc("GET /api/chirps", state.handlerGetChirps)
 	server_handler.HandleFunc("GET /api/chirps/{id}", state.handlerGetChirp)
-	server_handler.HandleFunc("POST /api/users", state.handlerUsers)
+	server_handler.HandleFunc("POST /api/login", state.handlerPostLogin)
+	server_handler.HandleFunc("POST /api/users", state.handlerPostUsers)
 
 	server := http.Server{
 		Handler: server_handler,
@@ -153,9 +157,10 @@ func (self *apiConfig) inc() {
 	self.fileServersHits.Add(1)
 }
 
-func (self *apiConfig) handlerUsers(resp http.ResponseWriter, req *http.Request) {
+func (self *apiConfig) handlerPostUsers(resp http.ResponseWriter, req *http.Request) {
 	usersJson := struct {
-		Email string `json:"email"`
+		Email    string `json:"email" validate:"required"`
+		Password string `json:"password" validate:"required"`
 	}{}
 
 	decoder := json.NewDecoder(req.Body)
@@ -167,7 +172,26 @@ func (self *apiConfig) handlerUsers(resp http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	user, err := self.dbQueries.CreateUser(req.Context(), usersJson.Email)
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	if err = validate.Struct(usersJson); err != nil {
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(err.Error()))
+
+		return
+	}
+
+	hashed_password, err := auth.HashPassword(usersJson.Password)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusInternalServerError, []byte(err.Error()))
+
+		return
+	}
+
+	user, err := self.dbQueries.CreateUser(req.Context(),
+		database.CreateUserParams{
+			Email:          usersJson.Email,
+			HashedPassword: hashed_password,
+		},
+	)
 	if err != nil {
 		errMsg := fmt.Sprintf("database create user failed -> %v", err)
 		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
@@ -221,4 +245,62 @@ func (self *apiConfig) middlewareMetricsInc(handler http.Handler) http.Handler {
 		self.inc()
 		handler.ServeHTTP(resp, req)
 	})
+}
+
+func (self *apiConfig) handlerPostLogin(resp http.ResponseWriter, req *http.Request) {
+	var logreq struct {
+		Password string `json:"password" validate:required`
+		Email    string `json:"email" validate:required`
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	defer req.Body.Close()
+
+	if err := decoder.Decode(&logreq); err != nil {
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(err.Error()))
+
+		return
+	}
+
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	if err := validate.Struct(logreq); err != nil {
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(err.Error()))
+
+		return
+	}
+
+	user, err := self.dbQueries.UserByEmail(req.Context(), logreq.Email)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusInternalServerError, []byte(err.Error()))
+
+		return
+	}
+
+	valid_password, err := auth.CheckPassword(logreq.Password, user.HashedPassword)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusInternalServerError, []byte(err.Error()))
+
+		return
+	}
+	if !valid_password {
+		httpRespond(resp, "text/plain", http.StatusUnauthorized, []byte("wrong credential"))
+
+		return
+	}
+
+	user_without_password := database.CreateUserRow{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+
+	to_send, err := json.Marshal(user_without_password)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusInternalServerError, []byte(err.Error()))
+
+		return
+	}
+
+	httpRespond(resp, "application/json", http.StatusOK, to_send)
 }
