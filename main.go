@@ -19,6 +19,7 @@ import (
 )
 
 func main() {
+	// load the '.env' file and make its content available as environment variable
 	godotenv.Load()
 
 	dbUrl := os.Getenv("DB_URL")
