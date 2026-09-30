@@ -6,13 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 type chirp struct {
-	Body   string    `json:"body"`
-	UserId uuid.UUID `json:"user_id"`
+	Body string `json:"body"`
 }
 
 func validate_chirp(resp http.ResponseWriter, req *http.Request) (chirp, error) {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"sync/atomic"
+	"time"
 
 	"github.com/gitc-azz/bootdotdev-go-learn-http-servers/internal/auth"
 	"github.com/gitc-azz/bootdotdev-go-learn-http-servers/internal/database"
@@ -32,6 +33,7 @@ func main() {
 		fileServersHits: atomic.Int32{},
 		dbQueries:       database.New(db),
 		isDevPlatform:   os.Getenv("PLATFORM") == "DEV",
+		jwtSecret:       os.Getenv("JWT_SECRET"),
 	}
 	server_handler := http.NewServeMux()
 	server_handler.Handle("/app/",
@@ -120,11 +122,26 @@ func (self *apiConfig) handlerChirps(resp http.ResponseWriter, req *http.Request
 		return
 	}
 
+	// must be authorized to post a chirp
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusUnauthorized, []byte(err.Error()))
+
+		return
+	}
+	userId, err := auth.ValidateJWT(token, self.jwtSecret)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to validate JWT token: %v", err).Error()
+		httpRespond(resp, "text/plain", http.StatusUnauthorized, []byte(errMsg))
+
+		return
+	}
+
 	cleanedChirp := censorship(chirp)
 
 	insertedChirp, err := self.dbQueries.CreateChirp(req.Context(), database.CreateChirpParams{
 		Body:   cleanedChirp.Body,
-		UserID: cleanedChirp.UserId,
+		UserID: userId,
 	})
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to insert chirp -> %v", err)
@@ -152,6 +169,7 @@ type apiConfig struct {
 	fileServersHits atomic.Int32
 	dbQueries       *database.Queries
 	isDevPlatform   bool
+	jwtSecret       string
 }
 
 func (self *apiConfig) inc() {
@@ -250,8 +268,9 @@ func (self *apiConfig) middlewareMetricsInc(handler http.Handler) http.Handler {
 
 func (self *apiConfig) handlerPostLogin(resp http.ResponseWriter, req *http.Request) {
 	var logreq struct {
-		Password string `json:"password" validate:required`
-		Email    string `json:"email" validate:required`
+		Password     string `json:"password" validate:required`
+		Email        string `json:"email" validate:required`
+		ExpiresInSec int64  `json:"expires_in_seconds" validate:omitempty`
 	}
 
 	decoder := json.NewDecoder(req.Body)
@@ -269,6 +288,8 @@ func (self *apiConfig) handlerPostLogin(resp http.ResponseWriter, req *http.Requ
 
 		return
 	}
+
+	logreq.ExpiresInSec = auth.ValidateExpireDuration(logreq.ExpiresInSec)
 
 	user, err := self.dbQueries.UserByEmail(req.Context(), logreq.Email)
 	if err != nil {
@@ -289,14 +310,29 @@ func (self *apiConfig) handlerPostLogin(resp http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	user_without_password := database.CreateUserRow{
+	token, err := auth.MakeJWT(user.ID, self.jwtSecret,
+		time.Second*time.Duration(logreq.ExpiresInSec))
+	if err != nil {
+		httpRespond(resp, "test/plain", http.StatusInternalServerError, []byte(err.Error()))
+
+		return
+	}
+
+	userWithJWT := struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Email     string    `json:"email"`
+		Token     string    `json:"token"`
+	}{
 		ID:        user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email:     user.Email,
+		Token:     token,
 	}
 
-	to_send, err := json.Marshal(user_without_password)
+	to_send, err := json.Marshal(userWithJWT)
 	if err != nil {
 		httpRespond(resp, "text/plain", http.StatusInternalServerError, []byte(err.Error()))
 

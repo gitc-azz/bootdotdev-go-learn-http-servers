@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -146,6 +148,57 @@ func TestValidateJWT(t *testing.T) {
 			}
 			if gotUserID != tt.wantUserID {
 				t.Errorf("ValidateJWT() gotUserID = %v, want %v", gotUserID, tt.wantUserID)
+			}
+		})
+	}
+}
+
+func TestGetBearerToken(t *testing.T) {
+	tcs := map[string]struct {
+		secret string
+	}{
+		"first": {
+			secret: "first",
+		},
+	}
+
+	for name, tc := range tcs {
+		t.Run(name, func(t *testing.T) {
+			id := uuid.New()
+			expected, err := MakeJWT(id, tc.secret, time.Hour)
+			if err != nil {
+				t.Error(err)
+			}
+
+			header := http.Header{}
+			header.Add("Authorization", "Bearer "+expected)
+			actual, err := GetBearerToken(header)
+			if err != nil {
+				t.Error(err)
+			}
+
+			if actual != expected {
+				t.Fatalf("actual: %v VS expected: %v", actual, expected)
+			}
+
+			header = http.Header{}
+			header.Add("Authorization", "BeRrer "+expected)
+			_, err = GetBearerToken(header)
+			if err == nil {
+				t.Error(errors.New("should get Authorization wrong format err"))
+			}
+
+			header = http.Header{}
+			_, err = GetBearerToken(header)
+			if err == nil {
+				t.Error(errors.New("should get Authorization missing"))
+			}
+
+			header = http.Header{}
+			header.Add("Authorization", "Bearer ")
+			_, err = GetBearerToken(header)
+			if err == nil {
+				t.Error(errors.New("should get token_string empty err"))
 			}
 		})
 	}
