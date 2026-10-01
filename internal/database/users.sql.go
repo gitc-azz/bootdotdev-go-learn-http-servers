@@ -58,6 +58,27 @@ func (q *Queries) EmptyUsers(ctx context.Context) error {
 	return err
 }
 
+const updateUsers = `-- name: UpdateUsers :exec
+UPDATE users
+SET
+    email = $2,
+    hashed_password = $3,
+    updated_at = NOW()
+WHERE
+    id = $1
+`
+
+type UpdateUsersParams struct {
+	ID             uuid.UUID `json:"id"`
+	Email          string    `json:"email"`
+	HashedPassword string    `json:"hashed_password"`
+}
+
+func (q *Queries) UpdateUsers(ctx context.Context, arg UpdateUsersParams) error {
+	_, err := q.db.ExecContext(ctx, updateUsers, arg.ID, arg.Email, arg.HashedPassword)
+	return err
+}
+
 const userByEmail = `-- name: UserByEmail :one
 SELECT id, created_at, updated_at, email, hashed_password
 FROM users

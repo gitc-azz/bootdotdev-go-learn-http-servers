@@ -49,6 +49,7 @@ func main() {
 	server_handler.HandleFunc("POST /api/refresh", state.handlerPostRefresh)
 	server_handler.HandleFunc("POST /api/revoke", state.handlerPostRevoke)
 	server_handler.HandleFunc("POST /api/users", state.handlerPostUsers)
+	server_handler.HandleFunc("PUT /api/users", state.handlerPutUsers)
 
 	server := http.Server{
 		Handler: server_handler,
@@ -425,4 +426,70 @@ func (self *apiConfig) handlerPostRevoke(resp http.ResponseWriter, req *http.Req
 	}
 
 	httpRespond(resp, "text/plain", http.StatusNoContent, []byte(""))
+}
+
+func (self *apiConfig) handlerPutUsers(resp http.ResponseWriter, req *http.Request) {
+	accessToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusUnauthorized, []byte(err.Error()))
+
+		return
+	}
+
+	userId, err := auth.ValidateJWT(accessToken, self.jwtSecret)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusUnauthorized, []byte(err.Error()))
+
+		return
+	}
+
+	input := struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}{}
+
+	decoder := json.NewDecoder(req.Body)
+	defer req.Body.Close()
+
+	if err = decoder.Decode(&input); err != nil {
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(err.Error()))
+
+		return
+	}
+
+	hashedPassword, err := auth.HashPassword(input.Password)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusInternalServerError, []byte(err.Error()))
+
+		return
+	}
+
+	err = self.dbQueries.UpdateUsers(
+		req.Context(),
+		database.UpdateUsersParams{
+			ID:             userId,
+			Email:          input.Email,
+			HashedPassword: hashedPassword,
+		},
+	)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusInternalServerError, []byte(err.Error()))
+
+		return
+	}
+
+	retToMarshal := struct {
+		Email string `json:"email"`
+	}{
+		Email: input.Email,
+	}
+
+	retToSend, err := json.Marshal(retToMarshal)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusInternalServerError, []byte(err.Error()))
+
+		return
+	}
+
+	httpRespond(resp, "application/json", http.StatusOK, retToSend)
 }
