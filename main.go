@@ -45,6 +45,7 @@ func main() {
 	server_handler.HandleFunc("POST /api/chirps", state.handlerChirps)
 	server_handler.HandleFunc("GET /api/chirps", state.handlerGetChirps)
 	server_handler.HandleFunc("GET /api/chirps/{id}", state.handlerGetChirp)
+	server_handler.HandleFunc("DELETE /api/chirps/{id}", state.handlerDeleteChirp)
 	server_handler.HandleFunc("POST /api/login", state.handlerPostLogin)
 	server_handler.HandleFunc("POST /api/refresh", state.handlerPostRefresh)
 	server_handler.HandleFunc("POST /api/revoke", state.handlerPostRevoke)
@@ -162,6 +163,61 @@ func (self *apiConfig) handlerChirps(resp http.ResponseWriter, req *http.Request
 	}
 
 	httpRespond(resp, "application/json; charset=utf-8", http.StatusCreated, toSend)
+}
+
+func (self *apiConfig) handlerDeleteChirp(resp http.ResponseWriter, req *http.Request) {
+	accessToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusUnauthorized, []byte(err.Error()))
+
+		return
+	}
+
+	userId, err := auth.ValidateJWT(accessToken, self.jwtSecret)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusUnauthorized, []byte(err.Error()))
+
+		return
+	}
+
+	idRaw := req.PathValue("id")
+	if idRaw == "" {
+		errMsg := "url path chirpId is empty"
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
+
+		return
+	}
+
+	id, err := uuid.Parse(idRaw)
+	if err != nil {
+		errMsg := "chirpId is ill formed"
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
+
+		return
+	}
+
+	chirp, err := self.dbQueries.Chirp(req.Context(), id)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusNotFound, []byte(err.Error()))
+
+		return
+	}
+
+	if chirp.UserID != userId {
+		errMsg := "not your chirp go away"
+		httpRespond(resp, "text/plain", http.StatusUnauthorized, []byte(errMsg))
+
+		return
+	}
+
+	err = self.dbQueries.DeleteChirp(req.Context(), id)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusInternalServerError, []byte(err.Error()))
+
+		return
+	}
+
+	httpRespond(resp, "text/plain", http.StatusNoContent, []byte{})
 }
 
 func handlerHealthz(resp http.ResponseWriter, req *http.Request) {
