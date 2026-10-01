@@ -205,7 +205,7 @@ func (self *apiConfig) handlerDeleteChirp(resp http.ResponseWriter, req *http.Re
 
 	if chirp.UserID != userId {
 		errMsg := "not your chirp go away"
-		httpRespond(resp, "text/plain", http.StatusUnauthorized, []byte(errMsg))
+		httpRespond(resp, "text/plain", http.StatusForbidden, []byte(errMsg))
 
 		return
 	}
