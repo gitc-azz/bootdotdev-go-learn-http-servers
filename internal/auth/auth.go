@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -104,10 +106,10 @@ func GetBearerToken(headers http.Header) (string, error) {
 	return tokenString, nil
 }
 
-func ValidateExpireDuration(expiresInSec int64) int64 {
-	if expiresInSec == 0 || expiresInSec > 3600 {
-		expiresInSec = 3600
-	}
+func MakeRefreshToken() string {
+	ret := make([]byte, 32)
 
-	return expiresInSec
+	rand.Read(ret)
+
+	return hex.EncodeToString(ret)
 }

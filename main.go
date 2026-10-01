@@ -46,6 +46,8 @@ func main() {
 	server_handler.HandleFunc("GET /api/chirps", state.handlerGetChirps)
 	server_handler.HandleFunc("GET /api/chirps/{id}", state.handlerGetChirp)
 	server_handler.HandleFunc("POST /api/login", state.handlerPostLogin)
+	server_handler.HandleFunc("POST /api/refresh", state.handlerPostRefresh)
+	server_handler.HandleFunc("POST /api/revoke", state.handlerPostRevoke)
 	server_handler.HandleFunc("POST /api/users", state.handlerPostUsers)
 
 	server := http.Server{
@@ -268,9 +270,8 @@ func (self *apiConfig) middlewareMetricsInc(handler http.Handler) http.Handler {
 
 func (self *apiConfig) handlerPostLogin(resp http.ResponseWriter, req *http.Request) {
 	var logreq struct {
-		Password     string `json:"password" validate:required`
-		Email        string `json:"email" validate:required`
-		ExpiresInSec int64  `json:"expires_in_seconds" validate:omitempty`
+		Password string `json:"password" validate:required`
+		Email    string `json:"email" validate:required`
 	}
 
 	decoder := json.NewDecoder(req.Body)
@@ -288,8 +289,6 @@ func (self *apiConfig) handlerPostLogin(resp http.ResponseWriter, req *http.Requ
 
 		return
 	}
-
-	logreq.ExpiresInSec = auth.ValidateExpireDuration(logreq.ExpiresInSec)
 
 	user, err := self.dbQueries.UserByEmail(req.Context(), logreq.Email)
 	if err != nil {
@@ -310,26 +309,45 @@ func (self *apiConfig) handlerPostLogin(resp http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	token, err := auth.MakeJWT(user.ID, self.jwtSecret,
-		time.Second*time.Duration(logreq.ExpiresInSec))
+	token, err := auth.MakeJWT(user.ID, self.jwtSecret, time.Hour)
 	if err != nil {
 		httpRespond(resp, "test/plain", http.StatusInternalServerError, []byte(err.Error()))
 
 		return
 	}
 
+	// keep a trace of that login in our database
+	// use of refresh token valid for the next 60 days
+	refreshToken := auth.MakeRefreshToken()
+	_, err = self.dbQueries.CreateRefreshToken(
+		req.Context(),
+		database.CreateRefreshTokenParams{
+			Token:     refreshToken,
+			UserID:    user.ID,
+			ExpiresAt: time.Now().Add(time.Hour * 24 * 60),
+		})
+	if err != nil {
+		errMsg :=
+			fmt.Errorf("failed to create an database entry refresh token -> %v", err).Error()
+		httpRespond(resp, "text/plain", http.StatusInternalServerError, []byte(errMsg))
+
+		return
+	}
+
 	userWithJWT := struct {
-		ID        uuid.UUID `json:"id"`
-		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
-		Email     string    `json:"email"`
-		Token     string    `json:"token"`
+		ID           uuid.UUID `json:"id"`
+		CreatedAt    time.Time `json:"created_at"`
+		UpdatedAt    time.Time `json:"updated_at"`
+		Email        string    `json:"email"`
+		Token        string    `json:"token"`
+		RefreshToken string    `json:"refresh_token"`
 	}{
-		ID:        user.ID,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-		Email:     user.Email,
-		Token:     token,
+		ID:           user.ID,
+		CreatedAt:    user.CreatedAt,
+		UpdatedAt:    user.UpdatedAt,
+		Email:        user.Email,
+		Token:        token,
+		RefreshToken: refreshToken,
 	}
 
 	to_send, err := json.Marshal(userWithJWT)
@@ -340,4 +358,71 @@ func (self *apiConfig) handlerPostLogin(resp http.ResponseWriter, req *http.Requ
 	}
 
 	httpRespond(resp, "application/json", http.StatusOK, to_send)
+}
+
+func (self *apiConfig) handlerPostRefresh(resp http.ResponseWriter, req *http.Request) {
+	refreshToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(err.Error()))
+
+		return
+	}
+
+	rtDatabase, err := self.dbQueries.GetRefreshToken(req.Context(), refreshToken)
+	isUnauthorized := err != nil ||
+		rtDatabase.RevokedAt.Valid ||
+		rtDatabase.ExpiresAt.Compare(time.Now()) == -1
+	if isUnauthorized {
+		errMsg := ""
+		if err != nil {
+			errMsg = err.Error()
+		} else if rtDatabase.RevokedAt.Valid {
+			errMsg = "refresh token revoked"
+		} else {
+			errMsg = "refresh token expired"
+		}
+		httpRespond(resp, "text/plain", http.StatusUnauthorized, []byte(errMsg))
+
+		return
+	}
+
+	accessToken, err := auth.MakeJWT(rtDatabase.UserID, self.jwtSecret, time.Hour)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusInternalServerError, []byte(err.Error()))
+
+		return
+	}
+
+	retToMarshal := struct {
+		Token string `json:"token"`
+	}{
+		Token: accessToken,
+	}
+
+	retToSend, err := json.Marshal(retToMarshal)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusInternalServerError, []byte(err.Error()))
+
+		return
+	}
+
+	httpRespond(resp, "application/json", http.StatusOK, retToSend)
+}
+
+func (self *apiConfig) handlerPostRevoke(resp http.ResponseWriter, req *http.Request) {
+	refreshToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(err.Error()))
+
+		return
+	}
+
+	err = self.dbQueries.RevokeRefreshToken(req.Context(), refreshToken)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusNotModified, []byte(err.Error()))
+
+		return
+	}
+
+	httpRespond(resp, "text/plain", http.StatusNoContent, []byte(""))
 }
