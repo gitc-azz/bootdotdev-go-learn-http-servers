@@ -51,6 +51,7 @@ func main() {
 	server_handler.HandleFunc("POST /api/revoke", state.handlerPostRevoke)
 	server_handler.HandleFunc("POST /api/users", state.handlerPostUsers)
 	server_handler.HandleFunc("PUT /api/users", state.handlerPutUsers)
+	server_handler.HandleFunc("POST /api/polka/webhooks", state.handlerPostPolkaWebHook)
 
 	server := http.Server{
 		Handler: server_handler,
@@ -398,6 +399,7 @@ func (self *apiConfig) handlerPostLogin(resp http.ResponseWriter, req *http.Requ
 		Email        string    `json:"email"`
 		Token        string    `json:"token"`
 		RefreshToken string    `json:"refresh_token"`
+		IsChirpyRed  bool      `json:"is_chirpy_red"`
 	}{
 		ID:           user.ID,
 		CreatedAt:    user.CreatedAt,
@@ -405,6 +407,7 @@ func (self *apiConfig) handlerPostLogin(resp http.ResponseWriter, req *http.Requ
 		Email:        user.Email,
 		Token:        token,
 		RefreshToken: refreshToken,
+		IsChirpyRed:  user.IsChirpyRed,
 	}
 
 	to_send, err := json.Marshal(userWithJWT)
@@ -548,4 +551,37 @@ func (self *apiConfig) handlerPutUsers(resp http.ResponseWriter, req *http.Reque
 	}
 
 	httpRespond(resp, "application/json", http.StatusOK, retToSend)
+}
+
+func (self *apiConfig) handlerPostPolkaWebHook(resp http.ResponseWriter, req *http.Request) {
+	input := struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserId uuid.UUID `json:"user_id"`
+		} `json:"data"`
+	}{}
+
+	decoder := json.NewDecoder(req.Body)
+	defer req.Body.Close()
+
+	if err := decoder.Decode(&input); err != nil {
+		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(err.Error()))
+
+		return
+	}
+
+	if input.Event != "user.upgraded" {
+		httpRespond(resp, "text/plain", http.StatusNoContent, []byte{})
+
+		return
+	}
+
+	err := self.dbQueries.UpgradeUserToRed(req.Context(), input.Data.UserId)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusNotFound, []byte(err.Error()))
+
+		return
+	}
+
+	httpRespond(resp, "text/plain", http.StatusNoContent, []byte{})
 }
