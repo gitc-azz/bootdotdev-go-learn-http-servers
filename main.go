@@ -34,6 +34,7 @@ func main() {
 		dbQueries:       database.New(db),
 		isDevPlatform:   os.Getenv("PLATFORM") == "DEV",
 		jwtSecret:       os.Getenv("JWT_SECRET"),
+		polkaKey:        os.Getenv("POLKA_KEY"),
 	}
 	server_handler := http.NewServeMux()
 	server_handler.Handle("/app/",
@@ -230,6 +231,7 @@ type apiConfig struct {
 	dbQueries       *database.Queries
 	isDevPlatform   bool
 	jwtSecret       string
+	polkaKey        string
 }
 
 func (self *apiConfig) inc() {
@@ -554,6 +556,18 @@ func (self *apiConfig) handlerPutUsers(resp http.ResponseWriter, req *http.Reque
 }
 
 func (self *apiConfig) handlerPostPolkaWebHook(resp http.ResponseWriter, req *http.Request) {
+	apiKey, err := auth.GetAPIKey(req.Header)
+	if err != nil {
+		httpRespond(resp, "text/plain", http.StatusUnauthorized, []byte(err.Error()))
+
+		return
+	}
+	if apiKey != self.polkaKey {
+		errMsg := "wrong api key"
+		httpRespond(resp, "text/plain", http.StatusUnauthorized, []byte(errMsg))
+
+		return
+	}
 	input := struct {
 		Event string `json:"event"`
 		Data  struct {
@@ -576,7 +590,7 @@ func (self *apiConfig) handlerPostPolkaWebHook(resp http.ResponseWriter, req *ht
 		return
 	}
 
-	err := self.dbQueries.UpgradeUserToRed(req.Context(), input.Data.UserId)
+	err = self.dbQueries.UpgradeUserToRed(req.Context(), input.Data.UserId)
 	if err != nil {
 		httpRespond(resp, "text/plain", http.StatusNotFound, []byte(err.Error()))
 

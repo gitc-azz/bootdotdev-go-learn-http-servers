@@ -106,6 +106,25 @@ func GetBearerToken(headers http.Header) (string, error) {
 	return tokenString, nil
 }
 
+func GetAPIKey(headers http.Header) (string, error) {
+	tokenString := headers.Get("Authorization")
+	if tokenString == "" {
+		return "", errors.New("Authorization missing from header")
+	}
+
+	prefix := "ApiKey "
+	if !strings.HasPrefix(tokenString, prefix) {
+		return "", errors.New("Authorization's format: " + prefix + "<token_string>")
+	}
+	tokenString = strings.TrimPrefix(tokenString, prefix)
+	tokenString = strings.TrimSpace(tokenString)
+	if tokenString == "" {
+		return "", errors.New("token_string is empty")
+	}
+
+	return tokenString, nil
+}
+
 func MakeRefreshToken() string {
 	ret := make([]byte, 32)
 
