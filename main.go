@@ -102,8 +102,30 @@ func (self *apiConfig) handlerGetChirp(resp http.ResponseWriter, req *http.Reque
 	httpRespond(resp, "application/json", http.StatusOK, toSend)
 }
 
+func (self *apiConfig) chirpsWithOptionalAuthorId(
+	req *http.Request,
+	authorId string,
+) ([]database.Chirp, error) {
+
+	if authorId == "" {
+		return self.dbQueries.Chirps(req.Context())
+	}
+
+	id, err := uuid.Parse(authorId)
+	if err != nil {
+		return []database.Chirp{}, nil
+	}
+
+	return self.dbQueries.ChirpsOf(req.Context(), id)
+}
+
 func (self *apiConfig) handlerGetChirps(resp http.ResponseWriter, req *http.Request) {
-	chirps, err := self.dbQueries.Chirps(req.Context())
+	var chirps []database.Chirp
+	var err error
+
+	authorId := req.URL.Query().Get("author_id")
+	chirps, err = self.chirpsWithOptionalAuthorId(req, authorId)
+
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to fetch chirps from db -> %v", err)
 		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
@@ -111,15 +133,7 @@ func (self *apiConfig) handlerGetChirps(resp http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	toSend, err := json.Marshal(chirps)
-	if err != nil {
-		errMsg := fmt.Sprintf("failed to marshal chirps -> %v", err)
-		httpRespond(resp, "text/plain", http.StatusBadRequest, []byte(errMsg))
-
-		return
-	}
-
-	httpRespond(resp, "application/json", http.StatusOK, toSend)
+	httpRespondJson(resp, chirps)
 }
 
 func (self *apiConfig) handlerChirps(resp http.ResponseWriter, req *http.Request) {
